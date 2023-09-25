@@ -17,7 +17,9 @@ import torch.nn.functional as F
 
 import util.misc as misc
 import util.lr_sched as lr_sched
+from torchvision.transforms import Resize
 
+import random
 
 def train_one_epoch(model: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -45,56 +47,23 @@ def train_one_epoch(model: torch.nn.Module,
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
+        # because for fused 2d, finetuned on 2d images with 3 channels
+        samples = samples["image"].repeat(1,3,1,1,1)
 
-        samples = samples["image"]
-        # samples = samples.repeat(1,3,1,1,1)
-
+        print("shape:", samples.shape)
         print("data_iter_step:", data_iter_step)
 
         if data_iter_step == 1:
-            print(samples.shape)
-
-        if torch.cuda.is_available():
-            # Get the current GPU device
-            device = torch.cuda.current_device()
-
-            # Get GPU memory usage in bytes
-            gpu_memory_bytes = torch.cuda.memory_allocated(device)
-
-            # Convert bytes to MB or GB for better readability
-            gpu_memory_mb = gpu_memory_bytes / (1024 ** 2)
-            gpu_memory_gb = gpu_memory_bytes / (1024 ** 3)
-
-            print(f"GPU memory used: {gpu_memory_mb:.2f} MB or {gpu_memory_gb:.2f} GB")
-        else:
-            print("CUDA is not available.")
+            print("samples shape:",samples.shape)
 
         samples.to(device, non_blocking=True)
         print("device:", device)
 
-        if torch.cuda.is_available():
-            # Get the current GPU device
-            device = torch.cuda.current_device()
-
-            # Get GPU memory usage in bytes
-            gpu_memory_bytes = torch.cuda.memory_allocated(device)
-
-            # Convert bytes to MB or GB for better readability
-            gpu_memory_mb = gpu_memory_bytes / (1024 ** 2)
-            gpu_memory_gb = gpu_memory_bytes / (1024 ** 3)
-
-            print(f"GPU memory used: {gpu_memory_mb:.2f} MB or {gpu_memory_gb:.2f} GB")
-        else:
-            print("CUDA is not available.")
-
         with torch.cuda.amp.autocast():
             loss, _, mask = model(samples, mask_ratio=args.mask_ratio)
 
-        print("loss shape:", loss.shape)
-        print("mask shape:", mask.shape)
         loss = (loss * mask).sum() / mask.sum()
         loss_value = loss.item()
-        print("loss:",loss,"loss item:", loss_value)
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
@@ -114,6 +83,8 @@ def train_one_epoch(model: torch.nn.Module,
         metric_logger.update(lr=lr)
 
         loss_value_reduce = misc.all_reduce_mean(loss_value)
+
+        # print("okay here")
         if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
             """ We use epoch_1000x as the x-axis in tensorboard.
             This calibrates different curves when batch size changes.
@@ -127,3 +98,18 @@ def train_one_epoch(model: torch.nn.Module,
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+        # if torch.cuda.is_available():
+        #     # Get the current GPU device
+        #     device = torch.cuda.current_device()
+
+        #     # Get GPU memory usage in bytes
+        #     gpu_memory_bytes = torch.cuda.memory_allocated(device)
+
+        #     # Convert bytes to MB or GB for better readability
+        #     gpu_memory_mb = gpu_memory_bytes / (1024 ** 2)
+        #     gpu_memory_gb = gpu_memory_bytes / (1024 ** 3)
+
+        #     print(f"GPU memory used: {gpu_memory_mb:.2f} MB or {gpu_memory_gb:.2f} GB")
+        # else:
+        #     print("CUDA is not available.")
