@@ -35,7 +35,7 @@ class SmoothedValue(object):
 
     def update(self, value, n=1):
         self.deque.append(value)
-        print("count ++")
+        # print("count ++")
         self.count += n
         self.total += value * n
 

@@ -43,7 +43,7 @@ def get_3d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     grid_h = np.arange(grid_size[0], dtype=np.float16)
     grid_w = np.arange(grid_size[1], dtype=np.float16)
     grid_z = np.arange(grid_size[2], dtype=np.float16)
-    grid = np.meshgrid(grid_z, grid_w, grid_h)  # here w goes first
+    grid = np.meshgrid(grid_w, grid_h, grid_z)  # here w goes first
     grid = np.stack(grid, axis=0)
 
     grid = grid.reshape([3, 1, grid_size[0], grid_size[1], grid_size[2]])
@@ -53,12 +53,14 @@ def get_3d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     return pos_embed
 
 def get_3d_sincos_pos_embed_from_grid(embed_dim, grid):
-    assert embed_dim % 3 == 0
+    # assert embed_dim % 3 == 0
+    a = int(embed_dim / 3)
+    print("embed dim:",a,a,embed_dim-2*a)
 
     # use half of dimensions to encode grid_h
-    emb_h = get_1d_sincos_pos_embed_from_grid(embed_dim // 3, grid[0])  # (H*W*Z, D/3)
-    emb_w = get_1d_sincos_pos_embed_from_grid(embed_dim // 3, grid[1])  # (H*W*Z, D/3)
-    emb_z = get_1d_sincos_pos_embed_from_grid(embed_dim // 3, grid[2])  # (H*W*Z, D/3)
+    emb_h = get_1d_sincos_pos_embed_from_grid(a, grid[0])  # (H*W*Z, D/3)
+    emb_w = get_1d_sincos_pos_embed_from_grid(a, grid[1])  # (H*W*Z, D/3)
+    emb_z = get_1d_sincos_pos_embed_from_grid(embed_dim-2*a, grid[2])  # (H*W*Z, D/3)
 
     emb = np.concatenate([emb_h, emb_w, emb_z], axis=1) # (H*W*Z, D)
     return emb

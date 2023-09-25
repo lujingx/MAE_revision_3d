@@ -17,10 +17,12 @@ python submitit_pretrain.py \
 ```
 
 ### I'm using:
+modify one of models_mae_***.py to models_mae.py and then run the instruction below
 ```
-python submitit_pretrain.py     --job_dir ./checkpoint     --nodes 8     --use_volta32     --batch_size 12     --model mae_vit_base_patch32     --norm_pix_loss     --mask_ratio 0.75     --epochs 800     --warmup_epochs 40     --blr 3.5e-3 --weight_decay 0.05     --data_path ./ --log_dir ./output_dir
+python submitit_pretrain.py     --job_dir ./checkpoint     --nodes 8     --use_volta32     --batch_size 12     --model mae_vit_base_patch16     --norm_pix_loss     --mask_ratio 0.75     --epochs 800     --warmup_epochs 40     --blr 3.5e-3 --weight_decay 0.05     --data_path ./ --log_dir ./output_dir
 ```
 
+### Below are copied from MAE README.md
 - Here the effective batch size is 64 (`batch_size` per gpu) * 8 (`nodes`) * 8 (gpus per node) = 4096. If memory or # gpus is limited, use `--accum_iter` to maintain the effective batch size, which is `batch_size` (per gpu) * `nodes` * 8 (gpus per node) * `accum_iter`.
 - `blr` is the base learning rate. The actual `lr` is computed by the [linear scaling rule](https://arxiv.org/abs/1706.02677): `lr` = `blr` * effective batch size / 256.
 - Here we use `--norm_pix_loss` as the target for better representation learning. To train a baseline model (e.g., for visualization), use pixel-based construction and turn off `--norm_pix_loss`.
