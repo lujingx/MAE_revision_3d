@@ -15,12 +15,14 @@ import numpy as np
 import os
 import time
 from pathlib import Path
+import random
 
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+from torchvision.transforms import Resize
 
 import timm
 
@@ -54,6 +56,8 @@ from monai.transforms import (
 )
 from monai.data import CacheDataset, DataLoader, Dataset, decollate_batch, ThreadDataLoader
 import glob
+from collections import OrderedDict
+import matplotlib.pyplot as plt
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -159,28 +163,69 @@ def main(args):
                 mode=("bilinear"),
             ),
             CropForegroundd(keys=["image"], source_key="image"),
-            Resized(keys=["image"], spatial_size=352, mode=("bilinear"), size_mode="longest"),
-            SpatialPadd(keys=["image"], spatial_size=(352,352,352), method="end"),
+            # Resized(keys=["image"], spatial_size=(224,224,64), mode=("bilinear")),
+            Resized(keys=["image"], spatial_size=224, mode=("bilinear"), size_mode="longest"),
+            SpatialPadd(keys=["image"], spatial_size=(224,224,224), method="end"),
+            # Resized(keys=["image"], spatial_size=(224,128,224), mode=("bilinear")),
             EnsureTyped(keys=["image"], device=device, track_meta=False, dtype=torch.float16),
         ]
     )
+    val_transforms = Compose(
+        [   
+            LoadImaged(keys=["image"]),
+            EnsureChannelFirstd(keys=["image"]),
+            ScaleIntensityRanged(
+                keys=["image"],
+                a_min=-57,
+                a_max=164,
+                b_min=0.0,
+                b_max=1.0,
+                clip=True,
+            ),
+            Orientationd(keys=["image"], axcodes="RAS"),
+            Spacingd(
+                keys=["image"],
+                pixdim=(1.5, 1.5, 2.0),
+                mode=("bilinear"),
+            ),
+            CropForegroundd(keys=["image"], source_key="image"),
+            # Resized(keys=["image"], spatial_size=(224,224,64), mode=("bilinear")),
+            Resized(keys=["image"], spatial_size=224, mode=("bilinear"), size_mode="longest"),
+            SpatialPadd(keys=["image"], spatial_size=(224,224,224), method="end"),
+            # Resized(keys=["image"], spatial_size=(224,128,224), mode=("bilinear")),
+            EnsureTyped(keys=["image"], device=device, track_meta=False),
+        ]
+    )
 
-    train_images = sorted(glob.glob(os.path.join(args.data_path, "imagesTr", "*.nii.gz")))
+    train_images = sorted(glob.glob(os.path.join(args.data_path, "*/imagesTr", "*.nii.gz")))
     # train_labels = sorted(glob.glob(os.path.join(args.data_path, "labelsTr", "*.nii.gz")))
     data_dicts = [{"image": image_name} for image_name in train_images]
-    # train_files, val_files = data_dicts[:-9], data_dicts[-9:]
+    index = [2,12,32,42,52,62,72,82,92,102,112,122,132,142,152,162,172,182,192,202,212,222,232,242,252,262,272,282,292,302,312,322,332,342,352,362,372,382,392,402.412,422,432,442,452,462,472,482,492]
+    j=0
+    k=0
+    train_files = dict()
+    val_files = dict()
+    for i in range(len(data_dicts)):
+        if i not in index:
+            train_files[j] = data_dicts[i]
+            j += 1
+        else:
+            val_files[k] = data_dicts[i]
+            k += 1
 
     set_determinism(seed=0)
-    train_ds = CacheDataset(data=data_dicts, transform=train_transforms, cache_rate=0.8, num_workers=4)
+    train_ds = CacheDataset(data=train_files, transform=train_transforms, cache_rate=0.8, num_workers=4)
+    val_ds = CacheDataset(data=val_files, transform=val_transforms, cache_rate=0.8, num_workers=4)
 
-    print("view train_ds sample: (shape, dtype)", first(train_ds)["image"].shape, first(train_ds)["image"].dtype)
+    print(first(train_ds)["image"].shape, first(train_ds)["image"].dtype)
 
     os.makedirs(args.log_dir, exist_ok=True)
     log_writer = SummaryWriter(log_dir=args.log_dir)
 
     eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
 
-    data_loader_train = ThreadDataLoader(train_ds, num_workers=0, batch_size=eff_batch_size, shuffle=True)
+    data_loader_train = ThreadDataLoader(train_ds, num_workers=0, batch_size=eff_batch_size, shuffle=True, drop_last=True)
+    data_loader_val = ThreadDataLoader(val_ds, num_workers=0, batch_size=eff_batch_size, shuffle=True, drop_last=True)
 
     check_data = first(data_loader_train)
     print(check_data.keys())
@@ -248,11 +293,79 @@ def main(args):
     print(optimizer)
     loss_scaler = NativeScaler()
 
+    # if(args.freeze):
+    freezed_num = 0
+    pass_num = 0
+    freeze_param = []
+    if(True):
+        # state_dict_xy = torch.load('./checkpoint/finetune2d/checkpoint-400.pth', map_location=torch.device('cpu'))
+        # state_dict_xz = torch.load('./checkpoint/finetune2d_xz/checkpoint-100.pth', map_location=torch.device('cpu'))
+        # state_dict_yz = torch.load('./checkpoint/finetune2d_yz/checkpoint-120.pth', map_location=torch.device('cpu'))
+        mae_dict = torch.load('./mae_visualize_vit_base.pth')
+        print(mae_dict["model"].keys())
+
+        new_state_dict = OrderedDict()
+        state_dict = model.state_dict()
+        print(state_dict.keys())
+
+        for k in mae_dict["model"]:
+            # print(k)
+            v = mae_dict["model"][k]
+            name = "module."+k # add `module.`
+            # if k == "module.patch_embed.proj.weight":
+            #     value = (torch.mean(state_dict_xy["model"][k],dim=1).unsqueeze(-1).repeat(1,1,1,16)+torch.mean(state_dict_xz["model"][k],dim=1).unsqueeze(-2).repeat(1,1,16,1)+torch.mean(state_dict_xz["model"][k],dim=1).unsqueeze(-3).repeat(1,16,1,1)).unsqueeze(1)
+            # else:
+            #     value = state_dict_xy["model"][k] + state_dict_xz["model"][k] + state_dict_yz["model"][k]
+            if name == 'module.patch_embed.proj.weight' or name == 'module.patch_embed.proj.bias':
+                continue
+            if v.shape == state_dict[name].shape:
+                new_state_dict[name] = v
+                # if k != "module.decoder_pos_embed" and k != "module.pos_embed":
+                #     freeze_param.append(k)
+            else:
+                print("del:",k)
+                print(v.shape,state_dict[name].shape)
+
+        msg = model.load_state_dict(new_state_dict, strict=False)
+        print(msg)
+        for (name, param) in model.named_parameters():
+            # print(name)
+            if name in freeze_param:
+                param.requires_grad = False
+            else:
+                pass
+
+        for (name, param) in model.named_parameters():
+            if param.requires_grad == False:
+                print("no grad:", name)
+                freezed_num += 1
+            else:
+                pass_num += 1
+        print('\n Total {} params, miss {} \n'.format(freezed_num + pass_num, pass_num))
+
+    # print("model.named_parameters")
+    # for name, p in model.named_parameters():
+    #     print(name)
+    #     print(p)
+
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
+    # print("model.named_parameters")
+    # for name, p in model.named_parameters():
+    #     print(name)
+    #     print(p)
+    
+    val_loss = []
     for epoch in range(args.start_epoch, args.epochs):
+        if epoch == 40:
+            for (name, param) in model.named_parameters():
+            # print(name)
+                if name in freeze_param:
+                    param.requires_grad = True
+                else:
+                    pass
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
@@ -265,6 +378,70 @@ def main(args):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch)
+        print("begin validation:")
+        if epoch % 10 == 0:
+            model.eval()
+            is_2d=False
+            with torch.no_grad():
+                count = 0
+                total = 0
+                if(is_2d):
+                    for val_data in data_loader_val:
+                        data = val_data["image"]
+                        N,C,H,W,Z = data.shape
+                        image = torch.zeros(N*4,C,H,W)
+                        index = random.sample(range(Z), 16)
+                        print("index:", index)
+                        data.to(dtype=torch.float32)
+                        print(type(data))
+
+                        for turn in range(4):
+                            k=0
+                            for i in range(N):
+                                for j in range(4*turn,4*turn+4):
+                                    print(index[j])
+                                    image[k,:,:,:] = data[i,:,:,:,index[j]]
+                                    k+=1
+                            samples = image.repeat(1,3,1,1)
+                            torch_resize = Resize([1024,1024]) # 定义Resize类对象
+                            samples = torch_resize(samples)
+
+                            print("shape:", samples.shape)
+
+                            samples.to(device, non_blocking=True)
+                            print("device:", device)
+
+                            loss, _, mask = model(samples, mask_ratio=args.mask_ratio)
+                            loss = (loss * mask).sum() / mask.sum()
+                            loss_value = loss.item()
+                            print("loss:",loss,"loss item:", loss_value)
+                            total += loss_value
+                            count += 1
+                else:
+                    for val_data in data_loader_val:
+                        # because for fused 2d, need to be 3 channels
+                        samples = val_data["image"].repeat(1,3,1,1,1)
+                        samples.to(device, non_blocking=True)
+                        print("device:", device)
+
+                        loss, _, mask = model(samples, mask_ratio=args.mask_ratio)
+                        loss = (loss * mask).sum() / mask.sum()
+                        loss_value = loss.item()
+                        print("loss:",loss,"loss item:", loss_value)
+                        total += loss_value
+                        count += 1
+
+                log_stats = {**{f'val_loss': total/count},
+                        'epoch': epoch,}
+                val_loss.append(total/count)
+                plt.plot(val_loss)
+                plt.savefig('val_loss_interpolate.png')
+
+            if args.output_dir and misc.is_main_process():
+                if log_writer is not None:
+                    log_writer.flush()
+                with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
+                    f.write(json.dumps(log_stats) + "\n")
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         'epoch': epoch,}
